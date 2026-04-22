@@ -1,5 +1,6 @@
-# Sensitive data - real doctor contacts
-resources/
+# Sensitive data - real doctor contacts (keep folder, ignore contents)
+resources/*
+!resources/.gitkeep
 output/
 
 # Python
@@ -16,6 +17,9 @@ build/
 .vscode/
 *.swp
 *.swo
+
+# Claude Code local settings
+.claude/
 
 # OS
 .DS_Store

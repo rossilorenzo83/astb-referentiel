@@ -93,6 +93,12 @@ class Doctor:
     source: str = ""
     date_import: str = field(default_factory=lambda: date.today().isoformat())
 
+    # Runtime-only metadata used by writer_excel to highlight cells.
+    # Maps field name -> marker dict: {"kind": "conflict"|"inferred"|"phonetic",
+    #                                  "comment": "<text>"}.
+    # Excluded from dedup/equality/output — not serialized to the Excel rows.
+    markers: dict = field(default_factory=dict, compare=False, repr=False)
+
     def dedup_key(self) -> tuple:
         """Key used for deduplication: (city, last_name, specialty)."""
         import unicodedata

@@ -1,7 +1,28 @@
 """Consolidated French medical directory field and specialty synonym dictionary."""
 
 import re
+import jellyfish
+
 from ..normalize import strip_accents
+
+# Canonical specialties that participate in phonetic matching. Computed once.
+_CANONICAL_SPECIALTIES = (
+    "NEPHROLOGIE", "PNEUMOLOGIE", "PSYCHIATRIE", "GENETIQUE", "OPHTALMOLOGIE",
+    "CARDIOLOGIE", "DERMATOLOGIE", "NEUROLOGIE", "UROLOGIE", "RHUMATOLOGIE",
+)
+_CANONICAL_METAPHONES = {
+    jellyfish.metaphone(s.lower()): s for s in _CANONICAL_SPECIALTIES
+}
+
+# Tracks the last phonetic-ambiguity reason so the caller can surface it.
+_last_phonetic_warning: list[str] = []
+
+
+def consume_phonetic_warnings() -> list[str]:
+    """Return and clear any pending phonetic-ambiguity messages."""
+    msgs = list(_last_phonetic_warning)
+    _last_phonetic_warning.clear()
+    return msgs
 
 # Maps Doctor field name -> list of (pattern, is_regex) synonyms.
 # Non-regex patterns matched case-insensitively after accent stripping.
@@ -121,16 +142,40 @@ def match_field_synonym(text: str) -> str | None:
     return best_field
 
 
-def match_specialty(text: str) -> str | None:
-    """Return canonical specialty name if text matches, else None."""
+def classify_specialty(text: str) -> tuple[str | None, str | None]:
+    """Return (canonical_specialty, method) for a raw specialty string.
+
+    method is one of "exact", "prefix", "fuzzy", "phonetic", or None.
+    Callers use the method to mark cells resolved by a non-exact path.
+    """
     if not text:
-        return None
+        return (None, None)
     normalized = strip_accents(text.strip().lower()).rstrip(":").strip()
-    # Exact match first
     if normalized in SPECIALTY_SYNONYMS:
-        return SPECIALTY_SYNONYMS[normalized]
-    # Prefix match
+        return (SPECIALTY_SYNONYMS[normalized], "exact")
     for prefix, spec in SPECIALTY_PREFIXES.items():
         if normalized.startswith(prefix):
-            return spec
-    return None
+            return (spec, "prefix")
+    from ..normalize import edit_distance
+    for prefix, spec in SPECIALTY_PREFIXES.items():
+        if len(prefix) < 6:
+            continue
+        head = normalized[: len(prefix)]
+        if len(head) == len(prefix) and edit_distance(head, prefix) <= 1:
+            return (spec, "fuzzy")
+    code = jellyfish.metaphone(normalized)
+    if code:
+        matches = [spec for c, spec in _CANONICAL_METAPHONES.items() if c == code]
+        if len(matches) == 1:
+            return (matches[0], "phonetic")
+        if len(matches) > 1:
+            _last_phonetic_warning.append(
+                f"[Phonetique] '{text}' correspond a plusieurs specialites "
+                f"({', '.join(matches)}) — non resolu"
+            )
+    return (None, None)
+
+
+def match_specialty(text: str) -> str | None:
+    """Return canonical specialty name if text matches, else None."""
+    return classify_specialty(text)[0]

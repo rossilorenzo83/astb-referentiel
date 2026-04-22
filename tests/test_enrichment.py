@@ -67,11 +67,14 @@ class TestEnrich(unittest.TestCase):
         self.assertIn("DUPONT", noms)
         self.assertIn("MARTIN", noms)
 
-    def test_transfer_detection(self):
+    def test_transfer_detection_with_explicit_signal(self):
+        """Transfer is applied (single record, updated location) when the
+        incoming record explicitly signals one via notes."""
         existing = [self._make_doctor(ville="Toulouse", hopital="CHU Toulouse")]
         new = [self._make_doctor(
             ville="Bordeaux", hopital="CHU Bordeaux",
             adresse="Place Raba-Leon", source="Nouvel import",
+            notes="Transfere depuis Toulouse",
         )]
         result, warns = enrich(existing, new)
         self.assertEqual(len(result), 1)
@@ -80,11 +83,26 @@ class TestEnrich(unittest.TestCase):
         self.assertIn("Transfere de Toulouse", result[0].notes)
         self.assertTrue(any("Transfert detecte" in w for w in warns))
 
-    def test_transfer_preserves_region(self):
+    def test_transfer_preserves_region_with_explicit_signal(self):
         existing = [self._make_doctor(ville="Toulouse", region="Occitanie")]
-        new = [self._make_doctor(ville="Bordeaux", source="Update")]
+        new = [self._make_doctor(
+            ville="Bordeaux", source="Update",
+            notes="transfere de Toulouse",
+        )]
         result, _ = enrich(existing, new)
         self.assertEqual(result[0].region, "Nouvelle-Aquitaine")
+
+    def test_cross_city_no_signal_is_conflict_not_transfer(self):
+        """Without an explicit transfer signal, the two records coexist
+        and the hopital cell is marked for human review."""
+        existing = [self._make_doctor(ville="Toulouse", hopital="CHU Toulouse")]
+        new = [self._make_doctor(ville="Bordeaux", hopital="CHU Bordeaux",
+                                  source="Fresh")]
+        result, warns = enrich(existing, new)
+        self.assertEqual(len(result), 2)
+        for rec in result:
+            self.assertEqual(rec.markers.get("hopital", {}).get("kind"), "conflict")
+        self.assertTrue(any("[Conflit hopital]" in w for w in warns))
 
     def test_no_false_transfer_different_specialty(self):
         existing = [self._make_doctor(ville="Toulouse", specialite="NEPHROLOGIE")]

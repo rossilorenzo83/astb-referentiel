@@ -63,9 +63,11 @@ def normalize_name(raw: str) -> tuple[str, str, str]:
     The source data label is 'NOM – PRENOM', so the expected order is
     LASTNAME Firstname. But the case convention varies:
     - 'LASTNAME Firstname' (clear: uppercase=nom, titlecase=prenom)
-    - 'Lastname Firstname' (both titlecase: first word=nom per the label convention)
+    - 'Lastname Firstname' (both titlecase: use first-name lexicon to detect
+       swapped order; fall back to first word = nom per label convention)
     - 'LASTNAME FIRSTNAME' (all uppercase: first word=nom, rest=prenom)
     """
+    from .french_names import is_french_first_name
     if not raw:
         return ("", "", "")
 
@@ -111,9 +113,20 @@ def normalize_name(raw: str) -> tuple[str, str, str]:
             return (titre, words[0], " ".join(words[1:]))
         return (titre, words[0], "")
     else:
-        # No uppercase words - all titlecase
-        # First word = nom per NOM-PRENOM label convention
+        # No uppercase words - all titlecase. Ambiguous order: consult the
+        # French first-name lexicon to detect swaps (e.g. "Jean Dupont" should
+        # be prenom=Jean, nom=DUPONT, not nom=JEAN).
         if len(words) >= 2:
+            first_is_prenom = is_french_first_name(words[0])
+            last_is_prenom = is_french_first_name(words[-1])
+            if first_is_prenom and not last_is_prenom:
+                # Swapped order: prenom at start, surname at end (+ compound)
+                return (titre, words[-1].upper(), " ".join(words[:-1]))
+            if last_is_prenom and not first_is_prenom:
+                # Expected order: surname first, given name last (+ compound)
+                return (titre, words[0].upper(), " ".join(words[1:]))
+            # Ambiguous (both recognized, or neither): fall back to the
+            # NOM-PRENOM label convention — first word is the surname.
             return (titre, words[0].upper(), " ".join(words[1:]))
         return (titre, words[0].upper() if words else "", "")
 

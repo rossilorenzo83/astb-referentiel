@@ -12,7 +12,7 @@ from .template import (
     FileTemplate, SheetTemplate, FileFormat, LayoutType,
     SectionDetectorKind,
 )
-from .synonyms import match_specialty, SPECIALTY_PREFIXES
+from .synonyms import match_specialty, classify_specialty, SPECIALTY_PREFIXES
 
 # City name normalization
 _VILLE_MAP = {
@@ -136,7 +136,11 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
 
     # --- Extract header ---
     ville = _normalize_ville(cells[0][1] if isinstance(cells[0], tuple) else cells[0])
-    type_centre = cells[1][1] if isinstance(cells[1], tuple) else cells[1]
+
+    type_centre = ""
+    if sheet.header and sheet.header.type_centre_row is not None:
+        tc_cell = cells[sheet.header.type_centre_row]
+        type_centre = tc_cell[1] if isinstance(tc_cell, tuple) else tc_cell
 
     responsable = ""
     if sheet.header and sheet.header.responsable_row is not None:
@@ -150,19 +154,11 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
 
     region = get_region(ville)
 
-    # Check if this sheet has numbered specialty sections
-    has_spec_detector = any(
-        d.kind == SectionDetectorKind.NUMBERED_PREFIX for d in sheet.section_detectors
-    )
-
-    # If no numbered sections detected, treat as freetext within this sheet
-    if not has_spec_detector:
-        return _parse_freetext_single_col(cells, ville, type_centre, responsable, region, sheet, warnings)
-
     # --- State machine ---
     doctors_raw = []
     current_specialty = ""
     current_specialty_detail = ""
+    current_specialty_origin = None  # set on each specialty header; copied to markers
     current_sector = ""
     current_doctor = None
 
@@ -174,12 +170,19 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
         current_doctor = None
 
     def new_doctor() -> Doctor:
-        return Doctor(
+        doc = Doctor(
             region=region, ville=ville, type_centre=type_centre,
             responsable_centre=responsable, specialite=current_specialty,
             specialite_detail=current_specialty_detail, secteur=current_sector,
             source="Excel",
         )
+        if current_specialty_origin is not None:
+            method, raw = current_specialty_origin
+            doc.markers["specialite"] = {
+                "kind": method,  # "fuzzy" or "phonetic"
+                "comment": f"Resolu depuis: {raw}",
+            }
+        return doc
 
     start_idx = sheet.data_start_row
 
@@ -187,11 +190,20 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
         cell = cells[idx]
         text = cell[1] if isinstance(cell, tuple) else cell
 
-        # --- Specialty header ---
+        # --- Specialty header (numbered or unnumbered) ---
         spec_match = re.match(r"^(\d+)\.?\s+(.*)", text)
+        spec_text = None
         if spec_match:
-            finalize_doctor()
             spec_text = spec_match.group(2).strip()
+        else:
+            stripped = text.strip().rstrip(":").strip()
+            # Unnumbered: short standalone line that resolves to a known specialty
+            if (stripped and len(stripped) < 80 and ":" not in text
+                    and match_specialty(stripped)):
+                spec_text = stripped
+
+        if spec_text is not None:
+            finalize_doctor()
 
             # Inline sector on same line
             inline_sector = None
@@ -210,7 +222,17 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
                     break
 
             spec_upper = spec_text.upper().strip().rstrip(":")
-            current_specialty = SPECIALTY_MAP.get(spec_upper, spec_upper)
+            current_specialty_origin = None  # None | 'fuzzy' | 'phonetic'
+            if spec_upper in SPECIALTY_MAP:
+                current_specialty = SPECIALTY_MAP[spec_upper]
+            else:
+                resolved, method = classify_specialty(spec_text)
+                if resolved:
+                    current_specialty = resolved
+                    if method in ("fuzzy", "phonetic"):
+                        current_specialty_origin = (method, spec_text)
+                else:
+                    current_specialty = spec_upper
             current_specialty_detail = detail
 
             # If classified as AUTRE but detail contains a known specialty,
@@ -304,6 +326,16 @@ def _parse_single_column(sheet: SheetTemplate, buffer: dict, file_tpl: FileTempl
         doctors_raw = _resolve_idem(doctors_raw, warnings, sheet.name)
 
     doctors = [d for d in doctors_raw if not d.is_empty()]
+
+    # Fallback: if the state machine found nothing, scavenge via freetext
+    # (handles sheets with loose Dr/Pr lines and no field labels)
+    if not doctors:
+        fb_docs, fb_warns = _parse_freetext_single_col(
+            cells, ville, type_centre, responsable, region, sheet, []
+        )
+        doctors = fb_docs
+        warnings.extend(fb_warns)
+
     return doctors, warnings
 
 

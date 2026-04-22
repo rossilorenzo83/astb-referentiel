@@ -68,26 +68,31 @@ def _scan_single_column(rows: list, sheet_name: str, warnings: list[str]) -> tup
         warnings.append(f"[Scanner/{sheet_name}] Trop peu de lignes ({len(cells)})")
         return tpl, cells
 
-    # Detect header block
+    # Detect header block. Only advance data_start past rows we actually
+    # recognize as header content, so files without a type_centre / responsable
+    # row still have their first meaningful line parsed.
     header = HeaderBlock()
     header.city_row = 0
+    data_start = 1  # city is always row 0
 
-    # Row 1 (cells[1]): check for center type
     if len(cells) > 1:
         text1 = cells[1][1].lower()
         if "centre" in text1 or "compétence" in text1 or "référence" in text1:
             header.type_centre_row = 1
+            data_start = 2
 
-    # Row 2 (cells[2]): check for "Responsable :"
-    if len(cells) > 2:
-        if re.match(r"Responsable\s*:", cells[2][1], re.IGNORECASE):
-            header.responsable_row = 2
+    if len(cells) > data_start:
+        if re.match(r"Responsable\s*:", cells[data_start][1], re.IGNORECASE):
+            header.responsable_row = data_start
             header.responsable_pattern = r"Responsable\s*:\s*(.*)"
+            data_start += 1
 
-    # Data start: skip address row if present
-    data_start = 3
-    if len(cells) > 3 and re.match(r"Adresse postale\s*:", cells[3][1], re.IGNORECASE):
-        data_start = 4
+    # Skip address-of-center row if present
+    if len(cells) > data_start and re.match(
+        r"Adresse postale\s*:", cells[data_start][1], re.IGNORECASE
+    ):
+        data_start += 1
+
     header.row_count = data_start
     tpl.header = header
     tpl.data_start_row = data_start
