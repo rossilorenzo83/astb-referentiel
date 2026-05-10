@@ -28,21 +28,50 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -t tests -v
 
-      - name: Build executable
-        run: pyinstaller --onefile --windowed --name ASTB_Annuaire --collect-submodules src launcher.py
+      - name: Build executable (onedir, no UPX, embedded version metadata)
+        run: pyinstaller --onedir --windowed --noupx --name ASTB_Annuaire --version-file version_info.txt --collect-submodules src launcher.py
 
-      - name: Rename executable with version
+      - name: Package artifacts
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
-          Copy-Item dist\ASTB_Annuaire.exe "dist\ASTB_Annuaire_$version.exe"
+          $stagingDir = "release_assets"
+          New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+          # Zip the onedir bundle (recommended distribution form)
+          $zipPath = "$stagingDir\ASTB_Annuaire_$version.zip"
+          Compress-Archive -Path dist\ASTB_Annuaire\* -DestinationPath $zipPath
+
+          # Also keep a standalone exe copy for users who want a single file
+          Copy-Item dist\ASTB_Annuaire\ASTB_Annuaire.exe "$stagingDir\ASTB_Annuaire_$version.exe"
+
+          # SHA256 checksums so users can verify integrity
+          Get-ChildItem $stagingDir -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Out-File -Encoding ascii "$stagingDir\SHA256SUMS.txt"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/ASTB_Annuaire.exe
-            dist/ASTB_Annuaire_${{ github.ref_name }}.exe
+            release_assets/ASTB_Annuaire_${{ github.ref_name }}.zip
+            release_assets/ASTB_Annuaire_${{ github.ref_name }}.exe
+            release_assets/SHA256SUMS.txt
           generate_release_notes: true
           draft: false
           prerelease: false
+          body: |
+            ## Installation
+
+            **Recommended:** download `ASTB_Annuaire_${{ github.ref_name }}.zip`, extract it, then run `ASTB_Annuaire.exe` from the extracted folder.
+            The onedir (folder) format triggers fewer antivirus false positives than the single-file exe.
+
+            **Alternative:** `ASTB_Annuaire_${{ github.ref_name }}.exe` standalone (may be flagged by SmartScreen or some antivirus tools - click "More info" then "Run anyway").
+
+            ## Integrity verification
+
+            Compare the SHA256 of the downloaded file against `SHA256SUMS.txt`:
+            ```powershell
+            Get-FileHash ASTB_Annuaire_${{ github.ref_name }}.zip -Algorithm SHA256
+            ```
