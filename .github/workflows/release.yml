@@ -40,16 +40,6 @@ jobs:
             throw "FATAL: onedir build did not produce dist\ASTB_Annuaire\ASTB_Annuaire.exe"
           }
 
-      - name: Build standalone single-file exe
-        run: pyinstaller --onefile --windowed --noupx --name ASTB_Annuaire_standalone --version-file version_info.txt --collect-submodules src launcher.py
-
-      - name: Verify standalone output
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "dist\ASTB_Annuaire_standalone.exe")) {
-            throw "FATAL: onefile build did not produce dist\ASTB_Annuaire_standalone.exe"
-          }
-
       - name: Package artifacts
         shell: pwsh
         run: |
@@ -72,9 +62,6 @@ jobs:
             throw "FATAL: zip $zipPath does not contain ASTB_Annuaire.exe at root"
           }
 
-          # True standalone single-file exe (works without sibling files)
-          Copy-Item dist\ASTB_Annuaire_standalone.exe "$stagingDir\ASTB_Annuaire_$version.exe"
-
           # SHA256 checksums for integrity verification
           $sumsPath = "$stagingDir\SHA256SUMS.txt"
           $files = @(Get-ChildItem $stagingDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" })
@@ -92,7 +79,6 @@ jobs:
         with:
           files: |
             release_assets/ASTB_Annuaire_${{ github.ref_name }}.zip
-            release_assets/ASTB_Annuaire_${{ github.ref_name }}.exe
             release_assets/SHA256SUMS.txt
           generate_release_notes: true
           draft: false
@@ -100,11 +86,13 @@ jobs:
           body: |
             ## Installation
 
-            Two distribution forms are provided:
+            1. Download `ASTB_Annuaire_${{ github.ref_name }}.zip`
+            2. Extract the zip to a folder of your choice
+            3. Run `ASTB_Annuaire.exe` from inside the extracted folder
 
-            **Single-file exe (simplest):** download `ASTB_Annuaire_${{ github.ref_name }}.exe` and run it. Standalone, no extraction needed. May trigger SmartScreen or AV warnings on first run - click "More info" then "Run anyway".
+            On first run, Windows SmartScreen may show "Windows protected your PC" - click **More info** then **Run anyway**. This is normal for unsigned executables.
 
-            **Folder bundle (best AV compatibility):** download `ASTB_Annuaire_${{ github.ref_name }}.zip`, extract it, then run `ASTB_Annuaire.exe` from the extracted folder. The onedir (folder) format is less likely to be flagged by antivirus tools.
+            For convenience: right-click `ASTB_Annuaire.exe` after extracting and pin it to Start or create a desktop shortcut.
 
             ## Integrity verification
 
