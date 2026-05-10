@@ -45,11 +45,16 @@ jobs:
           # Also keep a standalone exe copy for users who want a single file
           Copy-Item dist\ASTB_Annuaire\ASTB_Annuaire.exe "$stagingDir\ASTB_Annuaire_$version.exe"
 
-          # SHA256 checksums so users can verify integrity
-          Get-ChildItem $stagingDir -File | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($_.Name)"
-          } | Out-File -Encoding ascii "$stagingDir\SHA256SUMS.txt"
+          # SHA256 checksums so users can verify integrity.
+          # Materialize the file list before writing the output so we don't
+          # try to hash SHA256SUMS.txt while it is being written.
+          $sumsPath = "$stagingDir\SHA256SUMS.txt"
+          $files = @(Get-ChildItem $stagingDir -File | Where-Object { $_.FullName -ne (Resolve-Path $sumsPath -ErrorAction SilentlyContinue).Path })
+          $lines = foreach ($f in $files) {
+            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          Set-Content -Path $sumsPath -Value $lines -Encoding ascii
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
