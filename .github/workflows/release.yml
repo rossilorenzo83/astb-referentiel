@@ -28,8 +28,27 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -t tests -v
 
-      - name: Build executable (onedir, no UPX, embedded version metadata)
+      - name: Build onedir bundle (folder format, fewer AV false positives)
         run: pyinstaller --onedir --windowed --noupx --name ASTB_Annuaire --version-file version_info.txt --collect-submodules src launcher.py
+
+      - name: Verify onedir output
+        shell: pwsh
+        run: |
+          Write-Host "=== dist tree after onedir build ==="
+          Get-ChildItem dist -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
+          if (-not (Test-Path "dist\ASTB_Annuaire\ASTB_Annuaire.exe")) {
+            throw "FATAL: onedir build did not produce dist\ASTB_Annuaire\ASTB_Annuaire.exe"
+          }
+
+      - name: Build standalone single-file exe
+        run: pyinstaller --onefile --windowed --noupx --name ASTB_Annuaire_standalone --version-file version_info.txt --collect-submodules src launcher.py
+
+      - name: Verify standalone output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\ASTB_Annuaire_standalone.exe")) {
+            throw "FATAL: onefile build did not produce dist\ASTB_Annuaire_standalone.exe"
+          }
 
       - name: Package artifacts
         shell: pwsh
@@ -38,23 +57,35 @@ jobs:
           $stagingDir = "release_assets"
           New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
-          # Zip the onedir bundle (recommended distribution form)
+          # Zip the onedir bundle (recommended)
           $zipPath = "$stagingDir\ASTB_Annuaire_$version.zip"
-          Compress-Archive -Path dist\ASTB_Annuaire\* -DestinationPath $zipPath
+          Compress-Archive -Path "dist\ASTB_Annuaire\*" -DestinationPath $zipPath -Force
 
-          # Also keep a standalone exe copy for users who want a single file
-          Copy-Item dist\ASTB_Annuaire\ASTB_Annuaire.exe "$stagingDir\ASTB_Annuaire_$version.exe"
+          # Verify the zip actually contains the exe
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          $entries = @($zip.Entries | ForEach-Object { $_.FullName })
+          $zip.Dispose()
+          Write-Host "=== zip contents ==="
+          $entries | ForEach-Object { Write-Host "  $_" }
+          if (-not ($entries -contains "ASTB_Annuaire.exe")) {
+            throw "FATAL: zip $zipPath does not contain ASTB_Annuaire.exe at root"
+          }
 
-          # SHA256 checksums so users can verify integrity.
-          # Materialize the file list before writing the output so we don't
-          # try to hash SHA256SUMS.txt while it is being written.
+          # True standalone single-file exe (works without sibling files)
+          Copy-Item dist\ASTB_Annuaire_standalone.exe "$stagingDir\ASTB_Annuaire_$version.exe"
+
+          # SHA256 checksums for integrity verification
           $sumsPath = "$stagingDir\SHA256SUMS.txt"
-          $files = @(Get-ChildItem $stagingDir -File | Where-Object { $_.FullName -ne (Resolve-Path $sumsPath -ErrorAction SilentlyContinue).Path })
+          $files = @(Get-ChildItem $stagingDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" })
           $lines = foreach ($f in $files) {
             $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($f.Name)"
           }
           Set-Content -Path $sumsPath -Value $lines -Encoding ascii
+
+          Write-Host "=== release_assets ==="
+          Get-ChildItem $stagingDir | Format-Table -AutoSize
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -69,10 +100,11 @@ jobs:
           body: |
             ## Installation
 
-            **Recommended:** download `ASTB_Annuaire_${{ github.ref_name }}.zip`, extract it, then run `ASTB_Annuaire.exe` from the extracted folder.
-            The onedir (folder) format triggers fewer antivirus false positives than the single-file exe.
+            Two distribution forms are provided:
 
-            **Alternative:** `ASTB_Annuaire_${{ github.ref_name }}.exe` standalone (may be flagged by SmartScreen or some antivirus tools - click "More info" then "Run anyway").
+            **Single-file exe (simplest):** download `ASTB_Annuaire_${{ github.ref_name }}.exe` and run it. Standalone, no extraction needed. May trigger SmartScreen or AV warnings on first run - click "More info" then "Run anyway".
+
+            **Folder bundle (best AV compatibility):** download `ASTB_Annuaire_${{ github.ref_name }}.zip`, extract it, then run `ASTB_Annuaire.exe` from the extracted folder. The onedir (folder) format is less likely to be flagged by antivirus tools.
 
             ## Integrity verification
 

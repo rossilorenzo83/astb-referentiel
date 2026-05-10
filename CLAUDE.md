@@ -28,11 +28,18 @@ python -m unittest discover -s tests -v
 python -m unittest tests.test_enrichment
 python -m unittest tests.test_enrichment.TestEnrichment.test_transfer_detection
 
-# Build Windows .exe (produces dist/ASTB_Annuaire.exe)
-build.bat
+# Build the executable (cross-platform, produces dist/ASTB_Annuaire/ASTB_Annuaire.exe on Windows)
+python build.py        # works from cmd, PowerShell, Git Bash, WSL, Linux, macOS
+# Wrappers for convenience:
+build.bat              # Windows double-click / cmd.exe
+./build.sh             # Unix shells (Git Bash, WSL, Linux, macOS)
 ```
 
-**Build gotcha:** `build.bat` passes `--add-data "resources;resources"`, but the `resources/` folder is gitignored and often absent on fresh clones. Without it, PyInstaller fails silently and `dist/` stays empty. Either create an empty `resources/` folder before building or drop `--add-data` from the command — the app does not read anything from `resources/` at runtime (only tests do, and they use synthetic fixtures from `tests/conftest.py`).
+**Build notes:**
+- `build.py` is the source of truth — `build.bat` and `build.sh` just call it. Edit logic in `build.py`.
+- Output is `dist/ASTB_Annuaire/` (onedir mode); distribute the whole folder zipped, not just the .exe — the loose .exe needs its sibling `_internal/` folder to find `python3X.dll`.
+- On Windows, `version_info.txt` is embedded into the binary via `--version-file` to give it proper publisher metadata (reduces AV false positives). The flag is skipped on non-Windows since VERSIONINFO is a Windows-only PE resource.
+- Release pipeline (`.github/workflows/release.yml`) builds both onedir (zip) and onefile (standalone exe) on tag push.
 
 ## Architecture
 
